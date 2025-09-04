@@ -7,23 +7,30 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.paging.compose.collectAsLazyPagingItems
@@ -31,7 +38,10 @@ import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.polylab.thegallery.domain.model.MediaItem
 import com.polylab.thegallery.ui.screen.gallery.GalleryViewModel
+import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlin.math.abs
 
 @OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
 @Composable
@@ -43,23 +53,24 @@ fun FullscreenImageScreen(
 ) {
     val context = LocalContext.current
     val lazyPagingItems = viewModel.galleryItems.collectAsLazyPagingItems()
-    
+
     // Find the index of the selected media item
     val mediaItems = remember(lazyPagingItems.itemCount) {
         lazyPagingItems.itemSnapshotList.items.filterNotNull()
     }
-    
+
     val selectedIndex = remember(mediaId, mediaItems) {
         mediaItems.indexOfFirst { it.id == mediaId }.coerceAtLeast(0)
     }
-    
+
     val pagerState = rememberPagerState(
         initialPage = if (selectedIndex >= 0) selectedIndex else initialIndex,
         pageCount = { mediaItems.size }
     )
-    
+
     var showControls by remember { mutableStateOf(true) }
-    
+    var showShareOptions by remember { mutableStateOf(false) }
+
     // Auto-hide controls after 3 seconds
     LaunchedEffect(showControls) {
         if (showControls) {
@@ -67,11 +78,15 @@ fun FullscreenImageScreen(
             showControls = false
         }
     }
-    
+
     BackHandler {
-        onBackPressed()
+        if (showShareOptions) {
+            showShareOptions = false
+        } else {
+            onBackPressed()
+        }
     }
-    
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -82,13 +97,27 @@ fun FullscreenImageScreen(
             modifier = Modifier.fillMaxSize()
         ) { page ->
             if (page < mediaItems.size) {
-                ZoomableImage(
+                ZoomableImageWithGestures(
                     mediaItem = mediaItems[page],
-                    onClick = { showControls = !showControls }
+                    onClick = { showControls = !showControls },
+                    onLongPress = {
+                        showShareOptions = true
+                        showControls = true
+                    },
+                    onSwipeLeft = {
+                        if (page < mediaItems.size - 1) {
+                            // Navigate to next image
+                        }
+                    },
+                    onSwipeRight = {
+                        if (page > 0) {
+                            // Navigate to previous image
+                        }
+                    }
                 )
             }
         }
-        
+
         // Top controls overlay
         AnimatedVisibility(
             visible = showControls,
@@ -115,9 +144,9 @@ fun FullscreenImageScreen(
                             tint = Color.White
                         )
                     }
-                    
+
                     Row {
-                        IconButton(onClick = { /* TODO: Implement share */ }) {
+                        IconButton(onClick = { showShareOptions = true }) {
                             Icon(
                                 imageVector = Icons.Default.Share,
                                 contentDescription = "Share",
@@ -135,7 +164,7 @@ fun FullscreenImageScreen(
                 }
             }
         }
-        
+
         // Bottom indicator
         if (mediaItems.size > 1) {
             AnimatedVisibility(
@@ -159,34 +188,224 @@ fun FullscreenImageScreen(
                 }
             }
         }
+
+        // Share options overlay
+        AnimatedVisibility(
+            visible = showShareOptions,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier.align(Alignment.Center)
+        ) {
+            ShareOptionsDialog(
+                onDismiss = { showShareOptions = false },
+                onShareClick = {
+                    // TODO: Implement share functionality
+                    showShareOptions = false
+                },
+                onDownloadClick = {
+                    // TODO: Implement download functionality
+                    showShareOptions = false
+                },
+                onEditClick = {
+                    // TODO: Implement edit functionality
+                    showShareOptions = false
+                },
+                onDeleteClick = {
+                    // TODO: Implement delete functionality
+                    showShareOptions = false
+                }
+            )
+        }
     }
 }
 
 @Composable
-fun ZoomableImage(
+fun ShareOptionsDialog(
+    onDismiss: () -> Unit,
+    onShareClick: () -> Unit,
+    onDownloadClick: () -> Unit,
+    onEditClick: () -> Unit,
+    onDeleteClick: () -> Unit
+) {
+    Surface(
+        modifier = Modifier
+            .padding(32.dp)
+            .clickable(enabled = false) { }, // Prevent clicks from passing through
+        shape = RoundedCornerShape(16.dp),
+        color = Color.Black.copy(alpha = 0.8f),
+        shadowElevation = 8.dp
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(
+                text = "Options",
+                color = Color.White,
+                style = MaterialTheme.typography.headlineSmall,
+                modifier = Modifier.padding(bottom = 16.dp)
+            )
+
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(24.dp)
+            ) {
+                ShareOption(
+                    icon = Icons.Default.Share,
+                    label = "Share",
+                    onClick = onShareClick
+                )
+
+                ShareOption(
+                    icon = Icons.Default.Download,
+                    label = "Save",
+                    onClick = onDownloadClick
+                )
+
+                ShareOption(
+                    icon = Icons.Default.Edit,
+                    label = "Edit",
+                    onClick = onEditClick
+                )
+
+                ShareOption(
+                    icon = Icons.Default.Delete,
+                    label = "Delete",
+                    onClick = onDeleteClick
+                )
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            TextButton(onClick = onDismiss) {
+                Text(
+                    text = "Cancel",
+                    color = Color.White
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun ShareOption(
+    icon: ImageVector,
+    label: String,
+    onClick: () -> Unit
+) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier.clickable(onClick = onClick)
+    ) {
+        Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = Color.White.copy(alpha = 0.2f),
+            modifier = Modifier.size(56.dp)
+        ) {
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier.fillMaxSize()
+            ) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = label,
+                    tint = Color.White,
+                    modifier = Modifier.size(24.dp)
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        Text(
+            text = label,
+            color = Color.White,
+            style = MaterialTheme.typography.bodySmall
+        )
+    }
+}
+
+@Composable
+fun ZoomableImageWithGestures(
     mediaItem: MediaItem,
     onClick: () -> Unit,
+    onLongPress: () -> Unit,
+    onSwipeLeft: () -> Unit,
+    onSwipeRight: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val hapticFeedback = LocalHapticFeedback.current
     var scale by remember { mutableStateOf(1f) }
     var offsetX by remember { mutableStateOf(0f) }
     var offsetY by remember { mutableStateOf(0f) }
-    
+    var isLongPressing by remember { mutableStateOf(false) }
+
     Box(
         modifier = modifier
             .fillMaxSize()
             .pointerInput(Unit) {
                 detectTransformGestures { _, pan, zoom, _ ->
-                    scale = (scale * zoom).coerceIn(1f, 5f)
-                    
-                    val maxX = (size.width * (scale - 1)) / 2
-                    val maxY = (size.height * (scale - 1)) / 2
-                    
-                    offsetX = (offsetX + pan.x).coerceIn(-maxX, maxX)
-                    offsetY = (offsetY + pan.y).coerceIn(-maxY, maxY)
+                    if (!isLongPressing) {
+                        scale = (scale * zoom).coerceIn(1f, 5f)
+
+                        val maxX = (size.width * (scale - 1)) / 2
+                        val maxY = (size.height * (scale - 1)) / 2
+
+                        offsetX = (offsetX + pan.x).coerceIn(-maxX, maxX)
+                        offsetY = (offsetY + pan.y).coerceIn(-maxY, maxY)
+                    }
                 }
             }
-            .clickable { onClick() }
+            .pointerInput(Unit) {
+                detectDragGestures(
+                    onDragStart = { offset ->
+                        isLongPressing = false
+                    },
+                    onDragEnd = {
+                        isLongPressing = false
+                    }
+                ) { change, dragAmount ->
+                    // Only handle swipe gestures when not zoomed in
+                    if (scale == 1f) {
+                        val swipeThreshold = 100f
+
+                        if (abs(dragAmount.x) > abs(dragAmount.y)) {
+                            // Horizontal swipe
+                            if (dragAmount.x > swipeThreshold) {
+                                onSwipeRight()
+                            } else if (dragAmount.x < -swipeThreshold) {
+                                onSwipeLeft()
+                            }
+                        }
+                    }
+                }
+            }
+            .pointerInput(Unit) {
+                // Handle tap and long press
+                detectDragGestures(
+                    onDragStart = { offset ->
+                        // Start timer for long press
+                        GlobalScope.launch {
+                            delay(500) // Long press duration
+                            if (!isLongPressing) {
+                                isLongPressing = true
+                                hapticFeedback.performHapticFeedback(
+                                    androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress
+                                )
+                                onLongPress()
+                            }
+                        }
+                    },
+                    onDragEnd = {
+                        if (!isLongPressing) {
+                            onClick()
+                        }
+                        isLongPressing = false
+                    }
+                ) { _, _ ->
+                    // Prevent long press if dragging
+                    isLongPressing = false
+                }
+            }
     ) {
         AsyncImage(
             model = ImageRequest.Builder(LocalContext.current)
@@ -205,11 +424,11 @@ fun ZoomableImage(
                 )
         )
     }
-    
-    // Reset zoom on double tap
+
+    // Reset zoom on double tap or after inactivity
     LaunchedEffect(scale) {
         if (scale != 1f) {
-            delay(5000) // Reset after 5 seconds of inactivity
+            delay(3000) // Reset after 3 seconds of inactivity
             scale = 1f
             offsetX = 0f
             offsetY = 0f
